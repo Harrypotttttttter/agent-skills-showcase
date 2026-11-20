@@ -24,7 +24,7 @@ license: MIT
 ## 工作流（接到需求先走这套）
 
 1. **问清诉求**：用户要模型干什么（日常问答/写代码/推理/识图/中文/端侧轻量）？硬件什么配置（内存、是否 Mac 统一内存）？
-2. **选型**：`scripts/select_model.py` 按诉求+硬件+榜单+大小速度算综合分，给推荐+备选。**不唯榜单、不唯参数**。
+2. **选型**：先 `scripts/size_probe.py` 从 registry 实测候选模型真实体积、按运行时预算（权重+KV cache+开销）判定能否流畅跑——**跑不动的直接排除，不进候选**。再用 `scripts/select_model.py` 按诉求+硬件+榜单+大小速度算综合分，给推荐+备选。**不唯榜单、不唯参数；体积必须实测，不拍脑袋**。
 3. **找模型（可选）**：需要目录外的模型时，`scripts/model_scout.py` 在 Hugging Face 公开 API 检索、评估许可证与格式，筛出可商用可孵化的候选。
 4. **出部署方案**：`scripts/deploy_plan.py` 生成 Ollama 部署命令 + WorkBuddy `models.json` 配置条目 + 接入步骤。人确认后自行执行。
 5. **接入验证**：本地起 Ollama 后，`curl http://localhost:11434/v1/models` 确认端点在线，再把配置加进 WorkBuddy 重启验证。
@@ -34,12 +34,15 @@ license: MIT
 
 | 脚本 | 作用 | 关键参数 |
 |---|---|---|
+| `scripts/size_probe.py` | **体积探针（选型前置）**：registry 实测真实体积 + 运行时可行性判定（跑不动=别装） | `<spec...>` `--ram` `--mac` `--ctx` `--json` `--list-contexts` |
 | `scripts/select_model.py` | 模型选型器：按诉求+硬件+榜单+大小速度算综合分 | `--scene` `--ram` `--mac` `--need-vision` `--json` `--list` |
 | `scripts/deploy_plan.py` | 部署方案：Ollama 命令 + WorkBuddy 配置 | `<model_id>` `--ram` `--mac` `--json` |
 | `scripts/model_scout.py` | 开源模型猎手：Hugging Face 公开检索评估（需联网） | `search <词>` / `check <模型>` `--json` |
 | `scripts/upgrade_watch.py` | 升级追踪：检测模型是否有新版本（需联网） | `init`/`check`/`list` `--model` `--state` |
 
-选型器和部署规划器纯本地可跑；模型猎手和升级追踪器依赖 Hugging Face 公开 API（部分网络环境不可达，脚本会明确报错，不影响前两个工具）。全部带 `--help`、`--json`、退出码。
+选型器和部署规划器纯本地可跑；**体积探针、模型猎手、升级追踪器需联网**（部分网络环境不可达时脚本会明确报错，不编造数据）。全部带 `--help`、`--json`、退出码。
+
+**体积判定口径（实测得到，不拍脑袋）**：可给 Ollama 的内存 = 物理内存 × 85%（Mac 统一内存）/ 75%（其他）；运行时需求 = 权重体积 + KV cache 预留（8k≈0.6G / 32k≈2.2G / 128k≈8G）+ 推理开销 0.8G。余量 <0=跑不动别装，<1.5G=吃紧会 swap，≥1.5G 才可放心用。**vibecoding 要读代码库，按 32k 上下文判定，不能用 8k 的乐观值自欺**。
 
 ## 输出契约
 
