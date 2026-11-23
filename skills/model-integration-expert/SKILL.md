@@ -2,7 +2,7 @@
 name: model-integration-expert
 slug: model-integration-expert
 displayName: 模型调用及优化训练专家
-version: 1.2.5
+version: 1.2.6
 summary: 把模型选型、接入、本地部署做成可运行工具——按诉求和硬件算出最合适的免费开源模型，生成接入配置与部署命令，追踪模型迭代
 description: 大模型接入与本地化部署专家。当用户要做这些事时使用：接入海内外模型、选模型、本地部署开源模型、从 GitHub/Hugging Face 找可孵化的小模型、非官方模型的预训练与本地化改造、把模型接入 WorkBuddy 或应用、追踪模型是否有新版本。核心能力：模型选型器（诉求+榜单+硬件综合评分）、部署方案生成器（Ollama 命令 + WorkBuddy 配置）、开源模型猎手（公开 API 检索评估）、升级追踪器（定期检测迭代）。所有收录模型均为免费可商用许可证（Apache/MIT），零付费、零 Key、数据不出本机。触发词：模型接入、选模型、开源模型、本地部署、Ollama、微调、预训练、模型孵化、接入 WorkBuddy、模型升级。
 license: MIT
@@ -32,7 +32,9 @@ license: MIT
    - **强制思维链模型的坑**：Qwen3.5 等模型 template 内置强制 thinking，OpenAI 兼容客户端不传 `reasoning_effort` 时，reasoning 会吞掉 `max_tokens`、正文返回空。根治办法：用 `scripts/think_proxy.py` 起一个本地转发代理（自动注入 `reasoning_effort:none`），把 WorkBuddy 配置里的 `url` 指向该代理端口，而非直连 Ollama。**接入后必须用"不带任何 think 参数的标准调用"验证正文非空**，否则就是踩了这个坑。
    - **流式请求必须逐块转发（400/请求超时的隐藏根因）**：若转发代理对上游响应用 `resp.read()` 全量缓冲，`stream:true` 的调用方要等整段文本生成完（长文本可达 90+ 秒）才收到首字节，客户端超时阈值一到就报"400 请求超时"——**即使模型本身完全正常**。`think_proxy.py` 已实现真流式：检测到 `stream:true` 时用 `Transfer-Encoding: chunked` 边读边发、每 1KB 立即 flush。**验收必须测首字节延迟**：流式长文本首字节应 <2s（实测 0.4s），若等于总生成时长就是又踩了全量缓冲的坑。只测非流式会漏掉这个故障。
    - **Mac 量化选择**：Apple 芯片优先用官方 `-mlx` tag（走 MLX GPU，实测 19 tok/s），别用默认 tag 的 nvfp4（Mac 上无法正常工作）。name 带 mlx 但量化显示 nvfp4 时，看运行日志是否 `MLX engine initialized device=gpu`——是则能跑。
-   - **必须设 maxInputTokens/maxOutputTokens（发热+假死的隐藏根因）**：`models.json` 的本地模型条目若缺 `maxInputTokens`/`maxOutputTokens`（云端模型都有，如 1048576/393216），WorkBuddy 不知道本地模型的上下文边界，对话会无限增长，触发其"上下文压缩"机制、把超大 prompt 砸给本地模型——prefill 爆炸、KV cache 膨胀（实测 9GB→15GB）、swap 疯狂换页、机器发热卡顿、表现为"对提示词没反应/显示压缩中"。**模型本身完全正常**（小 prompt 1-2 秒即回）。修法：按 Ollama 侧 `OLLAMA_CONTEXT_LENGTH` 拆分填写，如 32K 窗填 `maxInputTokens:28672, maxOutputTokens:4096`。**验收看 `ollama ps` 的 SIZE**：应接近权重体积+2-3GB，若达权重 1.5 倍以上就是边界没设好。
+   - **必须设 maxInputTokens/maxOutputTokens（发热+假死的隐藏根因）**：`models.json` 的本地模型条目若缺 `maxInputTokens`/`maxOutputTokens`（云端模型都有，如 1048576/393216），WorkBuddy 不知道本地模型的上下文边界，对话会无限增长，触发其"上下文压缩"机制、把超大 prompt 砸给本地模型——prefill 爆炸、KV cache 膨胀（实测 9GB→15GB）、swap 疯狂换页、机器发热卡顿、表现为"对提示词没反应/显示压缩中"。**模型本身完全正常**（小 prompt 1-2 秒即回）。修法：按 Ollama 侧 `OLLAMA_CONTEXT_LENGTH` 拆分填写。**边界值须与代理输入预算一致**（见下条），如 8K 窗填 `maxInputTokens:6000, maxOutputTokens:2048`。**验收看 `ollama ps` 的 SIZE**：应接近权重体积+2-3GB，若达权重 1.5 倍以上就是边界没设好。
+   - **客户端无法强制约束历史长度时，用代理层兜底裁剪（根治"反复调参还是发热"）**：即使设了 maxInputTokens，部分客户端（Agent/IDE）仍会发超长历史或触发自己的压缩，把上万 token 的 prompt 砸给本地模型——实测单条 16809 token 的 prompt 让 prefill 跑满数分钟、内存峰值 12.7GB、机器持续发热，且反复出现。`think_proxy.py` 因此内置**输入长度保护**：`--max-prompt-tokens`（默认6000）超预算时自动裁剪最早历史、保留 system 与最近若干轮、永远保留最后一条 user，并在响应里回带裁剪说明（不静默丢内容）。**两层防护必须配套**：①Ollama 侧 `OLLAMA_CONTEXT_LENGTH=8192`（对话/图文够用，别开262K）；②代理 `--max-prompt-tokens 6000`；③models.json `maxInputTokens:6000`。三者一致才不会失控。**验收必测超大历史**：造 30 轮对话（≈16K token）经代理调用，应在几秒内返回且响应里带"已裁剪"说明；若超时或内存暴涨就是防护没生效。
+   - **上下文不是越大越好（8K 就够对话+图文）**：本地小模型的 KV cache 随上下文线性膨胀。实测 4B 模型在 32768 上下文下 prefill 峰值 12.7GB、单条 16K prompt 跑数分钟；降到 8192 后驻留 4.2GB、文本 0.6-1.2s、16K 历史经裁剪 2.8s。**日常问答/识图 8K 足够；需要读整库再调大，并接受相应内存代价**。
 6. **升级追踪（主动询问）**：问用户"要不要建个定期任务，检查这些模型有没有出新版？"——要的话用 `scripts/upgrade_watch.py` 登记基线，我可配一个轮询任务定期调用。
 
 ## 内置工具（Python 标准库，零依赖）
@@ -44,7 +46,7 @@ license: MIT
 | `scripts/deploy_plan.py` | 部署方案：Ollama 命令 + WorkBuddy 配置 | `<model_id>` `--ram` `--mac` `--json` |
 | `scripts/model_scout.py` | 开源模型猎手：Hugging Face 公开检索评估（需联网） | `search <词>` / `check <模型>` `--json` |
 | `scripts/upgrade_watch.py` | 升级追踪：检测模型是否有新版本（需联网） | `init`/`check`/`list` `--model` `--state` |
-| `scripts/think_proxy.py` | **思维链关闭代理**：转发时注入 `reasoning_effort:none`，解决强制 thinking 模型正文为空（零依赖、只监听本机） | `--listen` `--upstream` |
+| `scripts/think_proxy.py` | **本地模型接入代理**：注入 `reasoning_effort:none` 关思维链 + 超长历史裁剪（防发热假死）+ 真流式转发（防首字节超时）。零依赖、只监听本机 | `--listen` `--upstream` `--max-prompt-tokens` |
 
 选型器和部署规划器纯本地可跑；**体积探针、模型猎手、升级追踪器需联网**（部分网络环境不可达时脚本会明确报错，不编造数据）。全部带 `--help`、`--json`、退出码。
 
@@ -57,9 +59,9 @@ license: MIT
 **本机已部署（macOS，模型在工作区 `.ollama-models`）**：Ollama 服务 + think_proxy 都是手动后台进程，**重启后需重启**（launchd 自启在该受限环境不可用）。恢复命令（在项目根目录执行）：
 ```
 unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy
-HOME=/Users/yuan OLLAMA_MODELS="$PWD/.ollama-models" OLLAMA_HOST=127.0.0.1:11434 OLLAMA_CONTEXT_LENGTH=32768 OLLAMA_KEEP_ALIVE=4h OLLAMA_NUM_PARALLEL=1 OLLAMA_MAX_LOADED_MODELS=1 nohup /Applications/Ollama.app/Contents/Resources/ollama serve > /tmp/ollama-serve.log 2>&1 &
+HOME=/Users/yuan OLLAMA_MODELS="$PWD/.ollama-models" OLLAMA_HOST=127.0.0.1:11434 OLLAMA_CONTEXT_LENGTH=8192 OLLAMA_KEEP_ALIVE=30m OLLAMA_NUM_PARALLEL=1 OLLAMA_MAX_LOADED_MODELS=1 OLLAMA_FLASH_ATTENTION=1 nohup /Applications/Ollama.app/Contents/Resources/ollama serve > /tmp/ollama-serve.log 2>&1 &
 PY=/Users/yuan/.workbuddy/binaries/python/versions/3.13.12/bin/python3
-nohup $PY skills/model-integration-expert/scripts/think_proxy.py --listen 11435 --upstream http://127.0.0.1:11434 > /tmp/think-proxy.log 2>&1 &
+nohup $PY skills/model-integration-expert/scripts/think_proxy.py --listen 11435 --upstream http://127.0.0.1:11434 --max-prompt-tokens 6000 > /tmp/think-proxy.log 2>&1 &
 ```
 验证用 `curl --noproxy '*'`。已装模型：`qwen3.5:4b`（视觉+对话+文本，4.5B，走 MLX GPU，24GB Mac 甜点——文本1s/图文0.5s/驻留4.6GB/内存58%空闲）、`devstral:24b`（纯代码，14GB），并各建同名别名 `qwen35-vision-local` / `devstral-local`（`ollama cp`，与 WorkBuddy 配置 id 对齐，否则 404）。**教训：曾用 9B 视觉模型（8.9GB 权重/17GB 实占），24GB Mac + WorkBuddy 结构性超载，反复发热卡顿无反应——配置调优救不了，换 4B 才根治**。WorkBuddy 配置：`qwen35-vision-local`（指向 11435 代理）、`devstral-local`（直连 11434，非 thinking 无需代理）。**重启后若 404，先 `ollama list` 看别名在不在**。
 
