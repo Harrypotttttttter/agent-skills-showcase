@@ -76,6 +76,8 @@ def plan(model_id, ram, mac):
          "note": "返回 JSON 模型列表即表示可被 WorkBuddy 接入"},
     ]
     # WorkBuddy models.json 配置条目（OpenAI 兼容协议）
+    # maxInputTokens/maxOutputTokens 必填：缺了 WorkBuddy 不知上下文边界，
+    # 对话无限增长后触发压缩、超大 prompt 砸向本地模型 → 发热假死
     wb_config = {
         "id": model_id,
         "name": model_id,
@@ -86,6 +88,8 @@ def plan(model_id, ram, mac):
         "supportsImages": model_id in ("qwen3.5-9b", "qwen3.5-4b", "qwen3.5-27b", "gemma4-e4b", "gemma4-12b"),
         "supportsReasoning": model_id in ("deepseek-r1-8b", "qwen3.5-27b", "phi4-14b"),
         "useCustomProtocol": False,
+        "maxInputTokens": 28672,
+        "maxOutputTokens": 4096,
         "description": f"本地 Ollama 部署的 {model_id}，免费开源，数据不出本机",
     }
     return {
@@ -99,7 +103,7 @@ def plan(model_id, ram, mac):
         "workbuddy_models_json_entry": wb_config,
         "how_to_install_config": [
             "打开 ~/.workbuddy/models.json（数组结构）",
-            "把 workbuddy_models_json_entry 整条追加进数组",
+            "把 workbuddy_models_json_entry 整条追加进数组（maxInputTokens/maxOutputTokens 必须保留，缺了会导致上下文失控发热假死）",
             "重启 WorkBuddy，在模型列表选择该条目即可使用",
             "提示：改配置前先备份 models.json",
         ],
