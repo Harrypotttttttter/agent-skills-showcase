@@ -2,7 +2,7 @@
 name: model-integration-expert
 slug: model-integration-expert
 displayName: 模型调用及优化训练专家
-version: 1.2.4
+version: 1.2.5
 summary: 把模型选型、接入、本地部署做成可运行工具——按诉求和硬件算出最合适的免费开源模型，生成接入配置与部署命令，追踪模型迭代
 description: 大模型接入与本地化部署专家。当用户要做这些事时使用：接入海内外模型、选模型、本地部署开源模型、从 GitHub/Hugging Face 找可孵化的小模型、非官方模型的预训练与本地化改造、把模型接入 WorkBuddy 或应用、追踪模型是否有新版本。核心能力：模型选型器（诉求+榜单+硬件综合评分）、部署方案生成器（Ollama 命令 + WorkBuddy 配置）、开源模型猎手（公开 API 检索评估）、升级追踪器（定期检测迭代）。所有收录模型均为免费可商用许可证（Apache/MIT），零付费、零 Key、数据不出本机。触发词：模型接入、选模型、开源模型、本地部署、Ollama、微调、预训练、模型孵化、接入 WorkBuddy、模型升级。
 license: MIT
@@ -52,6 +52,8 @@ license: MIT
 
 **context length 是内存杀手（20GB→9GB 的实测教训）**：模型自带 `context length`（如 262K）会让 Ollama 按最大窗口**预分配 KV cache**——9.4B 模型在 262K 上下文下驻留达 20GB，24GB 内存的机器直接被吃穿：swap 疯狂换页、风扇狂转、推理慢到客户端超时（表现为"没反应/400请求超时"），**但模型本身完全正常**。部署必须按真实用途限制上下文：对话/图文 8K-32K 足够，用 `OLLAMA_CONTEXT_LENGTH=32768` 重启 serve。同时设 `OLLAMA_KEEP_ALIVE=4h`（默认 5 分钟卸载后又加载 20GB 反复卡）、`OLLAMA_NUM_PARALLEL=1`、`OLLAMA_MAX_LOADED_MODELS=1`。**验收看 `ollama ps` 的 SIZE**：应≈权重体积+几 GB，若达权重 2 倍以上就是没限上下文。实测：262K→32K 后驻留 20GB→9GB、内存空闲 21%→42%、热调用 4.7s→1.6s。
 
+**模型选型必须算「全系统内存总账」（9B→4B 的实测教训，比 context 更根本）**：只算"模型能不能跑"不够，要算 **macOS(~5-6GB) + 桌面应用(Electron类 4-5GB) + 模型权重 + KV cache + 推理开销** 的总和是否超物理内存。24GB Mac 跑 WorkBuddy 时，9B 视觉模型 GPU 实占 9-17GB + 系统 11GB = **28GB 结构性超载**——context 调优只能把 17GB 降到 9GB，但 9GB 仍然超载，反复出现发热/无反应/卡顿。**根治办法是换小模型**：4B 级（~5GB）才是 24GB Mac + Electron 应用的甜点，实测文本 1s、图文 0.5s、内存空闲 58%。**选型公式**：模型实占 ≤ (物理内存 - macOS - 常驻应用 - 2GB缓冲) 。配置调优救不了超载的模型，别浪费时间反复调参——跑不动就换，这是结构性问题。
+
 **本机已部署（macOS，模型在工作区 `.ollama-models`）**：Ollama 服务 + think_proxy 都是手动后台进程，**重启后需重启**（launchd 自启在该受限环境不可用）。恢复命令（在项目根目录执行）：
 ```
 unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy
@@ -59,7 +61,7 @@ HOME=/Users/yuan OLLAMA_MODELS="$PWD/.ollama-models" OLLAMA_HOST=127.0.0.1:11434
 PY=/Users/yuan/.workbuddy/binaries/python/versions/3.13.12/bin/python3
 nohup $PY skills/model-integration-expert/scripts/think_proxy.py --listen 11435 --upstream http://127.0.0.1:11434 > /tmp/think-proxy.log 2>&1 &
 ```
-验证用 `curl --noproxy '*'`。已装模型：`qwen3.5:9b-mlx`（视觉+对话+文本，走 MLX GPU）、`devstral:24b`（纯代码），并各建同名别名 `qwen35-vision-local` / `devstral-local`（`ollama cp`，与 WorkBuddy 配置 id 对齐，否则 404）。WorkBuddy 配置：`qwen35-vision-local`（指向 11435 代理）、`devstral-local`（直连 11434，非 thinking 无需代理）。**重启后若 404，先 `ollama list` 看别名在不在**。
+验证用 `curl --noproxy '*'`。已装模型：`qwen3.5:4b`（视觉+对话+文本，4.5B，走 MLX GPU，24GB Mac 甜点——文本1s/图文0.5s/驻留4.6GB/内存58%空闲）、`devstral:24b`（纯代码，14GB），并各建同名别名 `qwen35-vision-local` / `devstral-local`（`ollama cp`，与 WorkBuddy 配置 id 对齐，否则 404）。**教训：曾用 9B 视觉模型（8.9GB 权重/17GB 实占），24GB Mac + WorkBuddy 结构性超载，反复发热卡顿无反应——配置调优救不了，换 4B 才根治**。WorkBuddy 配置：`qwen35-vision-local`（指向 11435 代理）、`devstral-local`（直连 11434，非 thinking 无需代理）。**重启后若 404，先 `ollama list` 看别名在不在**。
 
 ## 输出契约
 
