@@ -2,7 +2,7 @@
 name: model-integration-expert
 slug: model-integration-expert
 displayName: 模型调用及优化训练专家
-version: 1.0.0
+version: 1.2.0
 summary: 把模型选型、接入、本地部署做成可运行工具——按诉求和硬件算出最合适的免费开源模型，生成接入配置与部署命令，追踪模型迭代
 description: 大模型接入与本地化部署专家。当用户要做这些事时使用：接入海内外模型、选模型、本地部署开源模型、从 GitHub/Hugging Face 找可孵化的小模型、非官方模型的预训练与本地化改造、把模型接入 WorkBuddy 或应用、追踪模型是否有新版本。核心能力：模型选型器（诉求+榜单+硬件综合评分）、部署方案生成器（Ollama 命令 + WorkBuddy 配置）、开源模型猎手（公开 API 检索评估）、升级追踪器（定期检测迭代）。所有收录模型均为免费可商用许可证（Apache/MIT），零付费、零 Key、数据不出本机。触发词：模型接入、选模型、开源模型、本地部署、Ollama、微调、预训练、模型孵化、接入 WorkBuddy、模型升级。
 license: MIT
@@ -27,7 +27,9 @@ license: MIT
 2. **选型**：先 `scripts/size_probe.py` 从 registry 实测候选模型真实体积、按运行时预算（权重+KV cache+开销）判定能否流畅跑——**跑不动的直接排除，不进候选**。再用 `scripts/select_model.py` 按诉求+硬件+榜单+大小速度算综合分，给推荐+备选。**不唯榜单、不唯参数；体积必须实测，不拍脑袋**。
 3. **找模型（可选）**：需要目录外的模型时，`scripts/model_scout.py` 在 Hugging Face 公开 API 检索、评估许可证与格式，筛出可商用可孵化的候选。
 4. **出部署方案**：`scripts/deploy_plan.py` 生成 Ollama 部署命令 + WorkBuddy `models.json` 配置条目 + 接入步骤。人确认后自行执行。
-5. **接入验证**：本地起 Ollama 后，`curl http://localhost:11434/v1/models` 确认端点在线，再把配置加进 WorkBuddy 重启验证。
+5. **接入验证**：本地起 Ollama 后，`curl --noproxy '*' http://localhost:11434/v1/models` 确认端点在线，再把配置加进 WorkBuddy 重启验证。
+   - **强制思维链模型的坑**：Qwen3.5 等模型 template 内置强制 thinking，OpenAI 兼容客户端不传 `reasoning_effort` 时，reasoning 会吞掉 `max_tokens`、正文返回空。根治办法：用 `scripts/think_proxy.py` 起一个本地转发代理（自动注入 `reasoning_effort:none`），把 WorkBuddy 配置里的 `url` 指向该代理端口，而非直连 Ollama。**接入后必须用"不带任何 think 参数的标准调用"验证正文非空**，否则就是踩了这个坑。
+   - **Mac 量化选择**：Apple 芯片优先用官方 `-mlx` tag（走 MLX GPU，实测 19 tok/s），别用默认 tag 的 nvfp4（Mac 上无法正常工作）。name 带 mlx 但量化显示 nvfp4 时，看运行日志是否 `MLX engine initialized device=gpu`——是则能跑。
 6. **升级追踪（主动询问）**：问用户"要不要建个定期任务，检查这些模型有没有出新版？"——要的话用 `scripts/upgrade_watch.py` 登记基线，我可配一个轮询任务定期调用。
 
 ## 内置工具（Python 标准库，零依赖）
@@ -39,6 +41,7 @@ license: MIT
 | `scripts/deploy_plan.py` | 部署方案：Ollama 命令 + WorkBuddy 配置 | `<model_id>` `--ram` `--mac` `--json` |
 | `scripts/model_scout.py` | 开源模型猎手：Hugging Face 公开检索评估（需联网） | `search <词>` / `check <模型>` `--json` |
 | `scripts/upgrade_watch.py` | 升级追踪：检测模型是否有新版本（需联网） | `init`/`check`/`list` `--model` `--state` |
+| `scripts/think_proxy.py` | **思维链关闭代理**：转发时注入 `reasoning_effort:none`，解决强制 thinking 模型正文为空（零依赖、只监听本机） | `--listen` `--upstream` |
 
 选型器和部署规划器纯本地可跑；**体积探针、模型猎手、升级追踪器需联网**（部分网络环境不可达时脚本会明确报错，不编造数据）。全部带 `--help`、`--json`、退出码。
 
