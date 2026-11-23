@@ -35,6 +35,7 @@ class Proxy(BaseHTTPRequestHandler):
 
         # 只对 chat/completions 注入；且仅当调用方没显式指定时
         inject = False
+        stream = False
         if path.rstrip("/").endswith("/chat/completions") and raw:
             try:
                 body = json.loads(raw)
@@ -42,6 +43,8 @@ class Proxy(BaseHTTPRequestHandler):
                     body.update(INJECT)
                     raw = json.dumps(body).encode()
                     inject = True
+                # 记录是否流式：流式必须逐块转发，不能全量缓冲，否则调用方首字节要等整段生成完
+                stream = bool(body.get("stream"))
             except (ValueError, UnicodeDecodeError):
                 pass
 
@@ -52,19 +55,36 @@ class Proxy(BaseHTTPRequestHandler):
             v = self.headers.get(h)
             if v:
                 req.add_header(h, v)
-        self.log_message("%s %s inject=%s", self.command, path, inject)
+        self.log_message("%s %s inject=%s stream=%s", self.command, path, inject, stream)
 
         # 关键：显式绕过任何代理环境变量，直连上游（否则继承失效代理会挂起）
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         try:
             with opener.open(req, timeout=600) as resp:
-                data = resp.read()
-                self.send_response(resp.status)
                 ctype = resp.headers.get("Content-Type", "application/json")
-                self.send_header("Content-Type", ctype)
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
+                if stream:
+                    # 真流式：不设 Content-Length，边读边发，调用方首字节立即可达。
+                    # HTTP/1.1 无 Content-Length 时用 chunked，逐个 data: 块立即刷出。
+                    self.send_response(resp.status)
+                    self.send_header("Content-Type", ctype)
+                    self.send_header("Cache-Control", "no-cache")
+                    self.send_header("Transfer-Encoding", "chunked")
+                    self.end_headers()
+                    while True:
+                        chunk = resp.read(1024)
+                        if not chunk:
+                            break
+                        self.wfile.write(("%X\r\n" % len(chunk)).encode() + chunk + b"\r\n")
+                        self.wfile.flush()
+                    self.wfile.write(b"0\r\n\r\n")
+                    self.wfile.flush()
+                else:
+                    data = resp.read()
+                    self.send_response(resp.status)
+                    self.send_header("Content-Type", ctype)
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
         except urllib.error.HTTPError as e:
             data = e.read()
             self.send_response(e.code)
