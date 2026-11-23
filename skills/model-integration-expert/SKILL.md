@@ -2,7 +2,7 @@
 name: model-integration-expert
 slug: model-integration-expert
 displayName: 模型调用及优化训练专家
-version: 1.2.1
+version: 1.2.2
 summary: 把模型选型、接入、本地部署做成可运行工具——按诉求和硬件算出最合适的免费开源模型，生成接入配置与部署命令，追踪模型迭代
 description: 大模型接入与本地化部署专家。当用户要做这些事时使用：接入海内外模型、选模型、本地部署开源模型、从 GitHub/Hugging Face 找可孵化的小模型、非官方模型的预训练与本地化改造、把模型接入 WorkBuddy 或应用、追踪模型是否有新版本。核心能力：模型选型器（诉求+榜单+硬件综合评分）、部署方案生成器（Ollama 命令 + WorkBuddy 配置）、开源模型猎手（公开 API 检索评估）、升级追踪器（定期检测迭代）。所有收录模型均为免费可商用许可证（Apache/MIT），零付费、零 Key、数据不出本机。触发词：模型接入、选模型、开源模型、本地部署、Ollama、微调、预训练、模型孵化、接入 WorkBuddy、模型升级。
 license: MIT
@@ -30,6 +30,7 @@ license: MIT
 5. **接入验证**：本地起 Ollama 后，`curl --noproxy '*' http://localhost:11434/v1/models` 确认端点在线，再把配置加进 WorkBuddy 重启验证。
    - **模型名必须一致（custom-model-404 的头号原因）**：WorkBuddy 发请求时用它配置里的 `id` 当 `model` 参数，不是 Ollama 里的注册名。若 `models.json` 的 `id` 是 `xxx-local`、而 Ollama 里只有 `qwen3.5:9b`，调用必然 404（`model 'xxx-local' not found`）。两种修法：①把配置 `id` 改成 Ollama 的真实注册名；②用 `ollama cp <真实名> <配置id>` 建同名别名（blob 共享、不额外占空间，推荐）。**验证时必须用配置 id 发请求**，只用真实名测会漏掉这个坑。
    - **强制思维链模型的坑**：Qwen3.5 等模型 template 内置强制 thinking，OpenAI 兼容客户端不传 `reasoning_effort` 时，reasoning 会吞掉 `max_tokens`、正文返回空。根治办法：用 `scripts/think_proxy.py` 起一个本地转发代理（自动注入 `reasoning_effort:none`），把 WorkBuddy 配置里的 `url` 指向该代理端口，而非直连 Ollama。**接入后必须用"不带任何 think 参数的标准调用"验证正文非空**，否则就是踩了这个坑。
+   - **流式请求必须逐块转发（400/请求超时的隐藏根因）**：若转发代理对上游响应用 `resp.read()` 全量缓冲，`stream:true` 的调用方要等整段文本生成完（长文本可达 90+ 秒）才收到首字节，客户端超时阈值一到就报"400 请求超时"——**即使模型本身完全正常**。`think_proxy.py` 已实现真流式：检测到 `stream:true` 时用 `Transfer-Encoding: chunked` 边读边发、每 1KB 立即 flush。**验收必须测首字节延迟**：流式长文本首字节应 <2s（实测 0.4s），若等于总生成时长就是又踩了全量缓冲的坑。只测非流式会漏掉这个故障。
    - **Mac 量化选择**：Apple 芯片优先用官方 `-mlx` tag（走 MLX GPU，实测 19 tok/s），别用默认 tag 的 nvfp4（Mac 上无法正常工作）。name 带 mlx 但量化显示 nvfp4 时，看运行日志是否 `MLX engine initialized device=gpu`——是则能跑。
 6. **升级追踪（主动询问）**：问用户"要不要建个定期任务，检查这些模型有没有出新版？"——要的话用 `scripts/upgrade_watch.py` 登记基线，我可配一个轮询任务定期调用。
 
