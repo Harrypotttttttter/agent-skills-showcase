@@ -47,6 +47,14 @@ license: MIT
 
 **体积判定口径（实测得到，不拍脑袋）**：可给 Ollama 的内存 = 物理内存 × 85%（Mac 统一内存）/ 75%（其他）；运行时需求 = 权重体积 + KV cache 预留（8k≈0.6G / 32k≈2.2G / 128k≈8G）+ 推理开销 0.8G。余量 <0=跑不动别装，<1.5G=吃紧会 swap，≥1.5G 才可放心用。**vibecoding 要读代码库，按 32k 上下文判定，不能用 8k 的乐观值自欺**。
 
+**本机已部署（macOS，模型在工作区 `.ollama-models`）**：Ollama 服务 + think_proxy 都是手动后台进程，**重启后需重启**（launchd 自启在该受限环境不可用）。恢复命令（在项目根目录执行）：
+```
+HOME=/Users/yuan OLLAMA_MODELS="$PWD/.ollama-models" OLLAMA_HOST=127.0.0.1:11434 nohup /Applications/Ollama.app/Contents/Resources/ollama serve > /tmp/ollama-serve.log 2>&1 &
+PY=/Users/yuan/.workbuddy/binaries/python/versions/3.13.12/bin/python3
+nohup $PY skills/model-integration-expert/scripts/think_proxy.py --listen 11435 --upstream http://127.0.0.1:11434 > /tmp/think-proxy.log 2>&1 &
+```
+注意 shell 可能带失效代理变量，启动前 `unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy`，验证用 `curl --noproxy '*'`。已装模型：`qwen3.5:9b-mlx`（视觉+对话+文本，走 MLX GPU）、`devstral:24b`（纯代码）。WorkBuddy 配置：`qwen35-vision-local`（指向 11435）、`devstral-local`（直连 11434，非 thinking 无需代理）。
+
 ## 输出契约
 
 1. **推荐必带理由**：说清综合分怎么来的（诉求/硬件/榜单/速度各多少），为什么不选榜单第一。
